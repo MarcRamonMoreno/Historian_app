@@ -1,0 +1,42 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "100.97.52.112:5002:5000"
+    volumes:
+      - type: bind
+        source: ${PWD}/configurations
+        target: /app/configurations
+      - processed_data:/tmp/csv_processor_output
+    environment:
+      - FLASK_ENV=production
+      - FLASK_DEBUG=1
+    healthcheck:
+      test: curl -f http://localhost:5000/status || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "100.97.52.112:3002:3000"
+    environment:
+      - WDS_SOCKET_PORT=0
+      - CHOKIDAR_USEPOLLING=true
+      - PORT=3000
+      - HOST=0.0.0.0
+      - REACT_APP_API_URL=http://100.97.52.112:5002/api
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  processed_data:
