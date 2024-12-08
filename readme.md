@@ -1,6 +1,18 @@
 # Historian Data Tool
 
-A web application for processing and managing historical data with a React frontend and Flask backend.
+A secure internal web application for processing and managing historical data with a React frontend and Flask backend. The application is accessible only through Tailscale VPN connection.
+
+## Access Requirements
+
+1. **Tailscale VPN**
+   - Must have Tailscale VPN installed on your device
+   - Need to be granted access to the network by the administrator
+   - Join the Tailscale network using provided credentials
+
+2. **Application Access**
+   - Frontend: http://hostname:3002
+   - Backend API: http://hostname:5002
+   - Contact the administrator for actual hostname and access permissions
 
 ## Features
 
