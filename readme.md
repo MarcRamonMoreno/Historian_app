@@ -114,19 +114,38 @@ npm start
 historian_app/
 ├── backend/
 │   ├── app.py                 # Flask application
+│   ├── available_tags.txt     # List of available tags
+│   ├── Dockerfile            # Backend container configuration
+│   ├── gunicorn.conf.py      # Gunicorn server configuration 
 │   ├── historian_processor.py # Data processing logic
-│   ├── requirements.txt       # Python dependencies
-│   └── Dockerfile            # Backend container configuration
-├── configurations/           # Tag configurations directory
-├── docker-compose.yml       # Docker services configuration
-└── frontend/
-    ├── src/
-    │   ├── components/      # React components
-    │   ├── App.js          # Main application component
-    │   ├── ConfigManager.js # Configuration management
-    │   └── DataProcessor.js # Data processing interface
-    ├── package.json        # Frontend dependencies
-    └── Dockerfile         # Frontend container configuration
+│   └── requirements.txt       # Python dependencies
+├── configurations/            # Tag configurations directory
+├── docker-compose.yml        # Docker services configuration
+├── frontend/
+│   ├── Dockerfile           # Frontend container configuration
+│   ├── package.json         # Frontend dependencies
+│   ├── postcss.config.js    # PostCSS configuration
+│   ├── public/
+│   │   └── index.html      # HTML entry point
+│   ├── src/
+│   │   ├── App.js          # Main application component
+│   │   ├── components/
+│   │   │   └── ui/
+│   │   │       ├── alert.jsx   # Alert component
+│   │   │       ├── button.jsx  # Button component
+│   │   │       └── input.jsx   # Input component
+│   │   ├── ConfigManager.js # Configuration management
+│   │   ├── DataProcessor.js # Data processing interface
+│   │   ├── hooks/
+│   │   │   └── useAPI.js    # API hook utilities
+│   │   ├── index.css       # Global styles
+│   │   ├── index.js        # React entry point
+│   │   └── lib/
+│   │       └── utils.js     # Utility functions
+│   └── tailwind.config.js   # Tailwind CSS configuration
+├── .gitignore              # Git ignore rules
+├── readme.md               # Project documentation
+└── technical-docs.md       # Technical documentation
 ```
 
 ## Configuration
