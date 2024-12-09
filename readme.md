@@ -44,55 +44,97 @@ A secure internal web application for processing and managing historical data wi
 - Python 3.x (for local development)
 - SQL Server ODBC Driver 18
 
-## Configuration
+## Project Structure and Configuration
 
-### Environment Variables and Credentials
+```
+historian_app/
+├── backend/
+│   ├── app.py                 # Flask application
+│   ├── available_tags.txt     # List of available tags
+│   ├── Dockerfile            # Backend container configuration
+│   ├── gunicorn.conf.py      # Gunicorn WSGI configuration
+│   ├── historian_processor.py # Data processing logic
+│   └── requirements.txt      # Python dependencies
+├── configurations/           # Tag configurations directory
+├── docker-compose.yml       # Docker services configuration
+├── frontend/
+│   ├── Dockerfile          # Frontend container configuration
+│   ├── package.json        # Frontend dependencies
+│   ├── postcss.config.js   # PostCSS configuration
+│   ├── public/
+│   │   └── index.html     # Main HTML file
+│   ├── src/
+│   │   ├── App.js         # Main application component
+│   │   ├── components/
+│   │   │   └── ui/
+│   │   │       ├── alert.jsx   # Alert component
+│   │   │       ├── button.jsx  # Button component
+│   │   │       └── input.jsx   # Input component
+│   │   ├── ConfigManager.js    # Configuration management
+│   │   ├── DataProcessor.js    # Data processing interface
+│   │   ├── hooks/
+│   │   │   └── useAPI.js      # API hook
+│   │   ├── index.css          # Global styles
+│   │   ├── index.js           # Entry point
+│   │   └── lib/
+│   │       └── utils.js       # Utility functions
+│   └── tailwind.config.js     # Tailwind configuration
+├── readme.md
+└── technical-docs.md          # Technical documentation
+```
 
-Before deploying the application, you need to configure several important parameters:
+### Required Configuration Changes
 
-1. **Database Configuration**
-   Edit `historian_processor.py` and `app.py` to update the database connection string:
+Before deploying the application, you need to update several configuration files:
+
+1. **Database Connection Configuration**
+   
+   In both `backend/app.py` and `backend/historian_processor.py`, update the database connection string:
    ```python
    conn_str = (
        "DRIVER={ODBC Driver 18 for SQL Server};"
-       "SERVER=your_server_hostname;"  # Replace with your SQL Server hostname
-       "DATABASE=your_database_name;"   # Replace with your database name
-       "UID=your_username;"            # Replace with your database username
-       "PWD=your_password;"            # Replace with your database password
+       "SERVER=hostname;"            # Replace with your SQL Server hostname
+       "DATABASE=database_name;"     # Replace with your database name
+       "UID=database_username;"      # Replace with your database username
+       "PWD=database_password;"      # Replace with your database password
        "TrustServerCertificate=yes;"
        "MARS_Connection=yes;"
        "Packet Size=32768"
    )
    ```
 
-2. **Hostname Configuration**
-   - In `docker-compose.yml`:
-     ```yaml
-     ports:
-       - "your_hostname:5002:5000"  # Replace your_hostname with actual hostname
-       - "your_hostname:3002:3000"  # Replace your_hostname with actual hostname
-     ```
-   - In `frontend/.env`:
-     ```
-     REACT_APP_API_URL=http://your_hostname:5002/api
-     ```
-
-3. **Create Environment Files**
+2. **Docker Compose Configuration**
    
-   Create a `.env` file in the project root:
-   ```
-   FLASK_ENV=production
-   FLASK_DEBUG=0
-   DATABASE_SERVER=your_server_hostname
-   DATABASE_NAME=your_database_name
-   DATABASE_USER=your_username
-   DATABASE_PASSWORD=your_password
+   In `docker-compose.yml`, update the hostname for both services:
+   ```yaml
+   services:
+     backend:
+       ports:
+         - "hostname:5002:5000"    # Replace hostname with your actual hostname
+     
+     frontend:
+       ports:
+         - "hostname:3002:3000"    # Replace hostname with your actual hostname
+       environment:
+         - REACT_APP_API_URL=http://hostname:5002/api    # Replace hostname
    ```
 
-4. **Security Considerations**
-   - Never commit `.env` files or files containing credentials to version control
-   - Use environment-specific configurations for development and production
-   - Consider using a secrets management service for production deployments
+3. **Frontend API Configuration**
+   
+   In `frontend/src/hooks/useAPI.js`, update the default API URL:
+   ```javascript
+   const API_URL = process.env.REACT_APP_API_URL || 'http://hostname:5002/api';  // Replace hostname
+   ```
+
+4. **Available Tags Configuration**
+   
+   Update `backend/available_tags.txt` with your list of available tags:
+   ```text
+   TT_4112_AVG
+   AT_1011_02
+   CL1001_FEED_VOLUME_SP
+   ...
+   ```
 
 ## Installation
 
@@ -108,9 +150,9 @@ mkdir -p configurations
 ```
 
 3. Configure the application:
-   - Update database credentials as described in the Configuration section
+   - Update database credentials in backend files
    - Set the appropriate hostname in docker-compose.yml
-   - Create and configure .env files
+   - Update available_tags.txt
 
 4. Start the application using Docker Compose:
 ```bash
@@ -136,13 +178,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-3. Set up environment variables:
-```bash
-cp .env.example .env  # Create from template
-# Edit .env with your configurations
-```
-
-4. Run the Flask application:
+3. Run the Flask application:
 ```bash
 python app.py
 ```
@@ -154,61 +190,17 @@ cd frontend
 npm install
 ```
 
-2. Configure environment:
-```bash
-cp .env.example .env  # Create from template
-# Edit .env with your configurations
-```
-
-3. Start the development server:
+2. Start the development server:
 ```bash
 npm start
 ```
-
-## Project Structure
-
-```
-historian_app/
-├── backend/
-│   ├── app.py                 # Flask application
-│   ├── historian_processor.py # Data processing logic
-│   ├── requirements.txt       # Python dependencies
-│   └── Dockerfile            # Backend container configuration
-├── configurations/           # Tag configurations directory
-├── docker-compose.yml       # Docker services configuration
-└── frontend/
-    ├── src/
-    │   ├── components/      # React components
-    │   ├── App.js          # Main application component
-    │   ├── ConfigManager.js # Configuration management
-    │   └── DataProcessor.js # Data processing interface
-    ├── package.json        # Frontend dependencies
-    └── Dockerfile         # Frontend container configuration
-```
-
-## Environment Variables Reference
-
-### Backend Variables
-- `FLASK_ENV`: Flask environment (development/production)
-- `FLASK_DEBUG`: Enable/disable debug mode
-- `DATABASE_SERVER`: SQL Server hostname
-- `DATABASE_NAME`: Database name
-- `DATABASE_USER`: Database username
-- `DATABASE_PASSWORD`: Database password
-- `PYTHONUNBUFFERED`: Python output buffering
-
-### Frontend Variables
-- `REACT_APP_API_URL`: Backend API URL
-- `NODE_ENV`: Node environment (development/production)
-- `PORT`: Frontend port (default: 3000)
-- `HOST`: Frontend host (default: 0.0.0.0)
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. **Database Connection Errors**
-   - Verify database credentials in .env file
+   - Verify database credentials in app.py and historian_processor.py
    - Ensure SQL Server is accessible from the application
    - Check if ODBC Driver 18 is properly installed
 
@@ -218,9 +210,9 @@ historian_app/
    - Modify docker-compose.yml if needed
 
 3. **Configuration Issues**
-   - Verify all environment variables are properly set
-   - Check hostname configuration in all relevant files
+   - Verify hostname configuration in all relevant files
    - Ensure configuration files have correct permissions
+   - Check if available_tags.txt exists and contains valid tags
 
 ## Contributing
 
