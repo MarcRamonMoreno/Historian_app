@@ -2,30 +2,39 @@
 
 A secure internal web application for processing and managing historical data with a React frontend and Flask backend. The application is accessible only through Tailscale VPN connection.
 
+## Important Security Notice
+
+**VPN Required**: This application is only accessible through Tailscale VPN. You must have:
+- Tailscale VPN installed on your device
+- Network access granted by administrator
+- Valid connection credentials
+
 ## Access Requirements
 
-1. **Tailscale VPN**
-   - Must have Tailscale VPN installed on your device
-   - Need to be granted access to the network by the administrator
-   - Join the Tailscale network using provided credentials
+1. **Tailscale VPN Setup**
+   - Install Tailscale VPN from [https://tailscale.com/download](https://tailscale.com/download)
+   - Request network access from administrator
+   - Connect using provided credentials
+   - Verify VPN connection status
 
 2. **Application Access**
-   - Frontend: http://hostname:3002
-   - Backend API: http://hostname:5002
-   - Contact the administrator for actual hostname and access permissions
+   - Frontend: `http://hostname:3002`
+   - Backend API: `http://hostname:5002`
+   - Contact administrator for actual hostname
 
 ## Features
 
-- Data processing with configurable time ranges and frequencies
-- Configuration management for tag selections
+- Secure VPN-based access
+- Data processing with configurable time ranges
+- Tag configuration management
 - Real-time tag search and filtering
 - CSV file generation and download
-- Docker containerization for easy deployment
+- Docker containerization for deployment
 
 ## Tech Stack
 
 ### Backend
-- Python 3.x
+- Python 3.10
 - Flask
 - pandas
 - pyodbc
@@ -41,8 +50,9 @@ A secure internal web application for processing and managing historical data wi
 
 - Docker and Docker Compose
 - Node.js (for local development)
-- Python 3.x (for local development)
+- Python 3.10+ (for local development)
 - SQL Server ODBC Driver 18
+- Tailscale VPN client
 
 ## Installation
 
@@ -63,8 +73,8 @@ docker-compose up --build
 ```
 
 The application will be available at:
-- Frontend: http://localhost:3002
-- Backend API: http://localhost:5002
+- Frontend: `http://localhost:3002`
+- Backend API: `http://localhost:5002`
 
 ## Development Setup
 
@@ -126,6 +136,11 @@ The application uses several environment variables that can be configured:
 - `REACT_APP_API_URL`: Backend API URL
 - Database connection parameters in `historian_processor.py`
 
+## Documentation
+
+- See `technical-docs.md` for technical documentation
+- See `user-guide.md` for detailed usage instructions
+
 ## Contributing
 
 1. Fork the repository
@@ -133,6 +148,13 @@ The application uses several environment variables that can be configured:
 3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
+
+## Security
+
+- Access restricted to Tailscale VPN network
+- Secure database connections
+- Data validation and sanitization
+- Error logging and monitoring
 
 ## License
 
