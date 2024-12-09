@@ -1,313 +1,294 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
+import { Alert, AlertDescription } from './components/ui/alert';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
-import { Alert, AlertDescription } from './components/ui/alert';
+import { useMemoizedFetch } from './hooks/useAPI';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://100.97.52.112:5002/api';
 
-const ConfigManager = () => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
-  const [cachedTags, setCachedTags] = useState([]);
-  const [selectedTags, setSelectedTags] = useState([]);
-  const [configurations, setConfigurations] = useState([]);
+function ConfigManager() {
   const [selectedConfig, setSelectedConfig] = useState('');
   const [newConfigName, setNewConfigName] = useState('');
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [searchTag, setSearchTag] = useState('');
+  
+  const {
+    data: configurationsData,
+    loading: configsLoading,
+    error: configsError,
+    fetchMemoizedData: fetchConfigurations
+  } = useMemoizedFetch('/configurations');
 
-  const loadTags = useCallback(async (reset = false) => {
-    if (isLoading || (!hasMore && !reset)) return;
-    
+  const {
+    data: configTagsData,
+    loading: configTagsLoading,
+    error: configTagsError,
+    fetchMemoizedData: fetchConfigTags
+  } = useMemoizedFetch(
+    selectedConfig ? `/configurations/${selectedConfig}/tags` : null,
+    [selectedConfig]
+  );
+
+  const {
+    data: availableTagsData,
+    loading: tagsLoading,
+    error: tagsError
+  } = useMemoizedFetch('/tags');
+
+  const createConfiguration = async () => {
     try {
-      setIsLoading(true);
-      const currentPage = reset ? 1 : page;
-      const response = await fetch(
-        `${API_URL}/tags/available?search=${encodeURIComponent(searchTerm)}&page=${currentPage}&per_page=100`
-      );
-      const data = await response.json();
-      
-      if (response.ok) {
-        const newTags = data.tags || [];
-        setCachedTags(prev => reset ? newTags : [...prev, ...newTags]);
-        setHasMore(currentPage * data.per_page < data.total);
-        setPage(currentPage + 1);
-      }
-    } catch (err) {
-      setError(`Error loading tags: ${err.message}`);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [searchTerm, page, hasMore, isLoading]);
+      if (!newConfigName) return;
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setPage(1);
-      setHasMore(true);
-      loadTags(true);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchTerm, loadTags]);
-
-  useEffect(() => {
-    loadTags();
-  }, [loadTags]);
-
-  useEffect(() => {
-    fetchConfigurations();
-  }, []);
-
-  const fetchConfigurations = async () => {
-    try {
-      const response = await fetch(`${API_URL}/configurations`);
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to fetch configurations');
-      }
-      
-      setConfigurations(data.configurations || []);
-      setError('');
-    } catch (err) {
-      setError(`Error fetching configurations: ${err.message}`);
-    }
-  };
-
-  const handleConfigSelect = async (configName) => {
-    setSelectedConfig(configName);
-    if (configName) {
-      try {
-        const response = await fetch(`${API_URL}/configurations/${configName}/tags`);
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.error || 'Failed to fetch configuration tags');
-        }
-        setSelectedTags(data.tags || []);
-      } catch (err) {
-        setError(`Error loading configuration: ${err.message}`);
-      }
-    } else {
-      setSelectedTags([]);
-    }
-  };
-
-  const handleAddTag = (tag) => {
-    if (!selectedTags.includes(tag)) {
-      setSelectedTags([...selectedTags, tag]);
-    }
-  };
-
-  const handleRemoveTag = (tag) => {
-    setSelectedTags(selectedTags.filter(t => t !== tag));
-  };
-
-  const handleSaveConfig = async () => {
-    try {
-      const response = await fetch(`${API_URL}/configurations/save`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: selectedConfig,
-          tags: selectedTags,
-        }),
-      });
-
-      const data = await response.json();
-      if (response.ok) {
-        setMessage('Configuration saved successfully');
-        fetchConfigurations();
-      } else {
-        throw new Error(data.error || 'Failed to save configuration');
-      }
-    } catch (err) {
-      setError(`Error saving configuration: ${err.message}`);
-    }
-  };
-
-  const handleCreateConfig = async () => {
-    if (!newConfigName) {
-      setError('Please enter a configuration name');
-      return;
-    }
-
-    try {
       const response = await fetch(`${API_URL}/configurations/create`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: newConfigName,
-          tags: selectedTags,
+          tags: []
         }),
       });
 
-      const data = await response.json();
-      if (response.ok) {
-        setMessage('Configuration created successfully');
-        fetchConfigurations();
-        setNewConfigName('');
-        setSelectedTags([]);
-      } else {
-        throw new Error(data.error || 'Failed to create configuration');
-      }
+      if (!response.ok) throw new Error('Failed to create configuration');
+      
+      setSuccess('Configuration created successfully');
+      setNewConfigName('');
+      fetchConfigurations();
     } catch (err) {
-      setError(`Error creating configuration: ${err.message}`);
+      setSuccess('');
     }
   };
 
-  const handleDeleteConfig = async () => {
-    if (!selectedConfig) {
-      setError('Please select a configuration to delete');
-      return;
-    }
-
+  const addTagToConfig = async (tag) => {
     try {
-      const response = await fetch(`${API_URL}/configurations/delete`, {
+      if (!selectedConfig) return;
+      if (configTagsData?.tags?.includes(tag)) return;
+
+      const tags = [...(configTagsData?.tags || []), tag];
+      
+      const response = await fetch(`${API_URL}/configurations/save`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: selectedConfig,
+          tags
         }),
       });
 
-      const data = await response.json();
-      if (response.ok) {
-        setMessage('Configuration deleted successfully');
-        fetchConfigurations();
-        setSelectedConfig('');
-        setSelectedTags([]);
-      } else {
-        throw new Error(data.error || 'Failed to delete configuration');
-      }
+      if (!response.ok) throw new Error('Failed to add tag');
+      
+      setSuccess('Tag added successfully');
+      fetchConfigTags();
     } catch (err) {
-      setError(`Error deleting configuration: ${err.message}`);
+      setSuccess('');
     }
   };
 
-  const observer = useCallback((node) => {
-    if (!node) return;
-    const intersectionObserver = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && hasMore && !isLoading) {
-        loadTags();
-      }
-    });
-    intersectionObserver.observe(node);
-    return () => intersectionObserver.disconnect();
-  }, [hasMore, isLoading, loadTags]);
+  const removeTag = async (tag) => {
+    try {
+      const tags = configTagsData?.tags?.filter(t => t !== tag) || [];
+      
+      const response = await fetch(`${API_URL}/configurations/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: selectedConfig,
+          tags
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to remove tag');
+      
+      setSuccess('Tag removed successfully');
+      fetchConfigTags();
+    } catch (err) {
+      setSuccess('');
+    }
+  };
+
+  const deleteConfiguration = async () => {
+    try {
+      if (!selectedConfig) return;
+
+      const response = await fetch(`${API_URL}/configurations/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: selectedConfig
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to delete configuration');
+      
+      setSuccess('Configuration deleted successfully');
+      setSelectedConfig('');
+      fetchConfigurations();
+    } catch (err) {
+      setSuccess('');
+    }
+  };
+
+  const filteredTags = availableTagsData?.tags?.filter(tag => 
+    tag.toLowerCase().includes(searchTag.toLowerCase()) &&
+    !configTagsData?.tags?.includes(tag)
+  ) || [];
 
   return (
-    <div className="min-h-screen bg-gray-100 p-8">
-      <div className="max-w-6xl mx-auto bg-white rounded-lg shadow p-6">
-        <h1 className="text-2xl font-bold mb-6">Configuration Manager</h1>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div>
-            <h2 className="text-lg font-semibold mb-4">Available Tags:</h2>
-            <Input
-              type="text"
-              placeholder="Search tags..."
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="mb-4"
-            />
-            <div className="border rounded-lg p-4 h-96 overflow-y-auto">
-              <div className="space-y-2">
-                {cachedTags.map((tag, index) => (
-                  <div 
-                    key={tag} 
-                    className="flex items-center justify-between py-1 hover:bg-gray-50"
-                    ref={index === cachedTags.length - 1 ? observer : null}
-                  >
-                    <span className="text-sm">{tag}</span>
-                    <Button
-                      onClick={() => handleAddTag(tag)}
-                      className="px-2 py-1 text-xs"
-                      disabled={selectedTags.includes(tag)}
-                    >
-                      Add
-                    </Button>
-                  </div>
-                ))}
-                {isLoading && <div className="text-center py-2">Loading...</div>}
-              </div>
+    <div className="max-w-7xl mx-auto px-4">
+      {(configsLoading || tagsLoading) && (
+        <Alert className="mb-4">
+          <AlertDescription>Loading...</AlertDescription>
+        </Alert>
+      )}
+
+      {(configsError || tagsError) && (
+        <Alert className="mb-4 bg-red-50 border-red-200 text-red-800">
+          <AlertDescription>
+            {configsError || tagsError}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-xl font-bold mb-4">Create New Configuration</h2>
+            <div className="flex gap-4 mb-4">
+              <Input
+                type="text"
+                placeholder="Configuration name"
+                value={newConfigName}
+                onChange={(e) => setNewConfigName(e.target.value)}
+                className="flex-1"
+                disabled={configsLoading}
+              />
+              <Button 
+                onClick={createConfiguration}
+                disabled={configsLoading || !newConfigName}
+              >
+                Create Configuration
+              </Button>
             </div>
           </div>
 
-          <div>
-            <h2 className="text-lg font-semibold mb-4">Selected Tags:</h2>
-            <div className="border rounded-lg p-4 h-96 overflow-y-auto">
-              <div className="space-y-2">
-                {selectedTags.map((tag) => (
-                  <div key={tag} className="flex items-center justify-between">
-                    <span className="text-sm">{tag}</span>
-                    <Button
-                      onClick={() => handleRemoveTag(tag)}
-                      className="px-2 py-1 text-xs bg-red-500 hover:bg-red-600"
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-xl font-bold mb-4">Manage Configuration</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Select Configuration</label>
+                <select
+                  value={selectedConfig}
+                  onChange={(e) => setSelectedConfig(e.target.value)}
+                  className="w-full p-2 border rounded"
+                  disabled={configsLoading}
+                >
+                  <option value="">Select configuration</option>
+                  {configurationsData?.configurations?.map((config) => (
+                    <option key={config} value={config}>{config}</option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedConfig && (
+                <>
+                  <div className="flex gap-4 items-center">
+                    <Button 
+                      onClick={deleteConfiguration}
+                      className="bg-red-600 hover:bg-red-700"
+                      disabled={configsLoading}
                     >
-                      Remove
+                      Delete Configuration
                     </Button>
                   </div>
-                ))}
-              </div>
+
+                  {configTagsLoading ? (
+                    <Alert>
+                      <AlertDescription>Loading configuration tags...</AlertDescription>
+                    </Alert>
+                  ) : configTagsError ? (
+                    <Alert className="bg-red-50 border-red-200 text-red-800">
+                      <AlertDescription>Error loading configuration tags: {configTagsError}</AlertDescription>
+                    </Alert>
+                  ) : configTagsData?.tags?.length > 0 && (
+                    <div>
+                      <h3 className="font-medium mb-2">Configuration Tags</h3>
+                      <div className="border rounded p-4 space-y-2 max-h-96 overflow-y-auto">
+                        {configTagsData.tags.map((tag) => (
+                          <div key={tag} className="flex justify-between items-center">
+                            <span>{tag}</span>
+                            <Button
+                              onClick={() => removeTag(tag)}
+                              className="text-red-600 hover:text-red-700"
+                              disabled={configTagsLoading}
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
 
-        <div className="mt-6 space-y-4">
-          <div className="flex items-center space-x-4">
-            <select
-              value={selectedConfig}
-              onChange={(e) => handleConfigSelect(e.target.value)}
-              className="flex-1 p-2 border rounded"
-            >
-              <option value="">Select Configuration</option>
-              {configurations.map((config) => (
-                <option key={config} value={config}>
-                  {config}
-                </option>
-              ))}
-            </select>
-            <Button onClick={handleSaveConfig}>Save</Button>
-            <Button
-              onClick={handleDeleteConfig}
-              className="bg-red-500 hover:bg-red-600"
-            >
-              Delete
-            </Button>
-          </div>
-
-          <div className="flex items-center space-x-4">
-            <Input
-              type="text"
-              value={newConfigName}
-              onChange={(e) => setNewConfigName(e.target.value)}
-              placeholder="New Configuration Name"
-              className="flex-1"
-            />
-            <Button onClick={handleCreateConfig}>Create New</Button>
-          </div>
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-xl font-bold mb-4">Available Tags</h2>
+          {selectedConfig ? (
+            <>
+              <Input
+                type="text"
+                placeholder="Search tags..."
+                value={searchTag}
+                onChange={(e) => setSearchTag(e.target.value)}
+                className="mb-4"
+                disabled={tagsLoading}
+              />
+              {tagsLoading ? (
+                <Alert>
+                  <AlertDescription>Loading available tags...</AlertDescription>
+                </Alert>
+              ) : tagsError ? (
+                <Alert className="bg-red-50 border-red-200 text-red-800">
+                  <AlertDescription>Error loading tags: {tagsError}</AlertDescription>
+                </Alert>
+              ) : (
+                <div className="border rounded p-4 max-h-[calc(100vh-300px)] overflow-y-auto">
+                  {filteredTags.map((tag) => (
+                    <div key={tag} className="flex justify-between items-center py-2">
+                      <span>{tag}</span>
+                      <Button
+                        onClick={() => addTagToConfig(tag)}
+                        disabled={configTagsLoading}
+                      >
+                        Add to Config
+                      </Button>
+                    </div>
+                  ))}
+                  {filteredTags.length === 0 && (
+                    <p className="text-gray-500 text-center py-4">
+                      No additional tags available
+                    </p>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-gray-500 text-center py-4">
+              Select a configuration to manage tags
+            </p>
+          )}
         </div>
-
-        {message && (
-          <Alert className="mt-4 bg-green-50 border-green-200">
-            <AlertDescription>{message}</AlertDescription>
-          </Alert>
-        )}
-
-        {error && (
-          <Alert className="mt-4 bg-red-50 border-red-200 text-red-800">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
       </div>
+
+      {success && (
+        <Alert className="mt-4 bg-green-50 border-green-200">
+          <AlertDescription>{success}</AlertDescription>
+        </Alert>
+      )}
     </div>
   );
-};
+}
 
 export default ConfigManager;

@@ -4,7 +4,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "HOST:5002:5000"
+      - "hostname:5002:5000"
     volumes:
       - type: bind
         source: ${PWD}/configurations
@@ -12,13 +12,21 @@ services:
       - processed_data:/tmp/csv_processor_output
     environment:
       - FLASK_ENV=production
-      - FLASK_DEBUG=1
+      - FLASK_DEBUG=0
+      - PYTHONUNBUFFERED=1
+      - GUNICORN_CMD_ARGS="--config=/app/gunicorn.conf.py"
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
     healthcheck:
-      test: curl -f http://localhost:5000/status || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 90s
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   frontend:
@@ -26,13 +34,14 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "HOST:3002:3000"
+      - "hostname:3002:3000"
     environment:
+      - NODE_ENV=production
       - WDS_SOCKET_PORT=0
       - CHOKIDAR_USEPOLLING=true
       - PORT=3000
       - HOST=0.0.0.0
-      - REACT_APP_API_URL=http://HOST:5002/api
+      - REACT_APP_API_URL=http://hostname:5002/api
     depends_on:
       backend:
         condition: service_healthy

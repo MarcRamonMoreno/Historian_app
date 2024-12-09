@@ -1,14 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Alert, AlertDescription } from './components/ui/alert';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
+import { useMemoizedFetch } from './hooks/useAPI';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://100.97.52.112:5002/api';
 
 function DataProcessor() {
-  const [configurations, setConfigurations] = useState([]);
   const [selectedConfig, setSelectedConfig] = useState('');
-  const [tags, setTags] = useState([]);
   const [startDate, setStartDate] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -16,46 +15,27 @@ function DataProcessor() {
   const [frequency, setFrequency] = useState('00:10:00');
   const [status, setStatus] = useState('');
   const [processedFiles, setProcessedFiles] = useState([]);
-  const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetchConfigurations();
-  }, []);
+  const { 
+    data: configurationsData,
+    loading: configsLoading,
+    error: configsError,
+  } = useMemoizedFetch('/configurations');
 
-  const fetchConfigurations = async () => {
-    try {
-      const response = await fetch(`${API_URL}/configurations`);
-      const data = await response.json();
-      setConfigurations(data.configurations);
-    } catch (err) {
-      setError('Failed to fetch configurations');
-    }
-  };
-
-  const fetchTags = async (configName) => {
-    try {
-      const response = await fetch(`${API_URL}/configurations/${configName}/tags`);
-      const data = await response.json();
-      setTags(data.tags);
-    } catch (err) {
-      setError('Failed to fetch tags');
-    }
-  };
-
-  const handleConfigChange = (e) => {
-    const value = e.target.value;
-    setSelectedConfig(value);
-    if (value) {
-      fetchTags(value);
-    } else {
-      setTags([]);
-    }
-  };
+  const {
+    data: configTagsData,
+    loading: tagsLoading,
+    error: tagsError,
+  } = useMemoizedFetch(
+    selectedConfig ? `/configurations/${selectedConfig}/tags` : null,
+    [selectedConfig]
+  );
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!selectedConfig) return;
+
     setStatus('Processing...');
-    setError('');
     setProcessedFiles([]);
 
     try {
@@ -81,10 +61,11 @@ function DataProcessor() {
         setStatus('Data processed successfully!');
         setProcessedFiles(data.processed_files || []);
       } else {
-        setError(data.error || 'Processing failed');
+        throw new Error(data.error || 'Processing failed');
       }
     } catch (err) {
-      setError('Failed to process data');
+      setStatus(`Error: ${err.message}`);
+      setProcessedFiles([]);
     }
   };
 
@@ -93,22 +74,58 @@ function DataProcessor() {
       <div className="max-w-2xl mx-auto bg-white rounded-lg shadow p-6">
         <h1 className="text-2xl font-bold mb-6">Historian Data Processor</h1>
         
+        {configsLoading && (
+          <Alert className="mb-4">
+            <AlertDescription>Loading configurations...</AlertDescription>
+          </Alert>
+        )}
+
+        {configsError && (
+          <Alert className="mb-4 bg-red-50 border-red-200 text-red-800">
+            <AlertDescription>Error loading configurations: {configsError}</AlertDescription>
+          </Alert>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
             <label className="block text-sm font-medium">Configuration</label>
             <select
               value={selectedConfig}
-              onChange={handleConfigChange}
+              onChange={(e) => setSelectedConfig(e.target.value)}
               className="w-full p-2 border rounded"
+              disabled={configsLoading}
             >
               <option value="">Select configuration</option>
-              {configurations.map((config) => (
+              {configurationsData?.configurations?.map((config) => (
                 <option key={config} value={config}>
                   {config}
                 </option>
               ))}
             </select>
           </div>
+
+          {selectedConfig && (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium">Configuration Tags:</label>
+              {tagsLoading ? (
+                <Alert>
+                  <AlertDescription>Loading tags...</AlertDescription>
+                </Alert>
+              ) : tagsError ? (
+                <Alert className="bg-red-50 border-red-200 text-red-800">
+                  <AlertDescription>Error loading tags: {tagsError}</AlertDescription>
+                </Alert>
+              ) : (
+                <div className="text-sm text-gray-600 max-h-40 overflow-y-auto p-2 border rounded">
+                  {configTagsData?.tags?.map((tag) => (
+                    <div key={tag} className="py-1">
+                      {tag}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="space-y-2">
             <label className="block text-sm font-medium">Start Date and Time</label>
@@ -164,27 +181,18 @@ function DataProcessor() {
             />
           </div>
 
-          {selectedConfig && tags.length > 0 && (
-            <div className="space-y-2">
-              <label className="block text-sm font-medium">Selected Tags:</label>
-              <div className="text-sm text-gray-600 max-h-40 overflow-y-auto p-2 border rounded">
-                {tags.map((tag) => (
-                  <div key={tag} className="py-1">
-                    {tag}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <Button type="submit" className="w-full">
+          <Button 
+            type="submit" 
+            className="w-full"
+            disabled={!selectedConfig || configsLoading || tagsLoading}
+          >
             Process Data
           </Button>
         </form>
 
         {status && (
           <div>
-            <Alert className="mt-4 bg-green-50 border-green-200">
+            <Alert className={`mt-4 ${status.includes('Error') ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
               <AlertDescription>{status}</AlertDescription>
             </Alert>
             {processedFiles.length > 0 && (
@@ -206,12 +214,6 @@ function DataProcessor() {
               </div>
             )}
           </div>
-        )}
-
-        {error && (
-          <Alert className="mt-4 bg-red-50 border-red-200 text-red-800">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
         )}
       </div>
     </div>
