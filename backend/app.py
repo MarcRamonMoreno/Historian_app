@@ -1,18 +1,19 @@
-from flask import Flask, request, jsonify, send_from_directory
+from functools import lru_cache
+from flask import Flask, request, jsonify, send_from_directory, g
 from flask_cors import CORS
 import os
-from dotenv import load_dotenv
 import logging
-from historian_processor import HistorianProcessor, ConfigurationManager
+from historian_processor import OptimizedHistorianProcessor, ConfigurationManager
 from datetime import datetime
 import pandas as pd
 import pyodbc
-import time
 import threading
 from typing import List, Optional
 
-# Load environment variables
-load_dotenv()
+# Cache for filtered and paginated results
+_tag_cache = {}
+_cache_time = {}
+CACHE_DURATION = 300  # 5 minutes
 
 # Set up logging
 logging.basicConfig(
@@ -21,31 +22,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger("app")
 
-# Constants from environment variables
-CONFIG_DIR = os.getenv('CONFIG_DIR', os.path.abspath(os.path.join(os.getcwd(), "configurations")))
-OUTPUT_DIR = os.getenv('OUTPUT_DIR', "/tmp/csv_processor_output")
-FLASK_ENV = os.getenv('FLASK_ENV', 'development')
-FLASK_DEBUG = os.getenv('FLASK_DEBUG', '1') == '1'
-HOST = os.getenv('HOST', '0.0.0.0')
-PORT = int(os.getenv('PORT', 5000))
+# Constants
+CONFIG_DIR = os.path.abspath(os.path.join(os.getcwd(), "configurations"))
+OUTPUT_DIR = "/tmp/csv_processor_output"
 
 # Global tag storage
 _all_tags: List[str] = []
 _tags_lock = threading.Lock()
 _last_refresh = 0
 
-# Database connection string from environment variables
-conn_str = (
-    "DRIVER={ODBC Driver 18 for SQL Server};"
-    f"SERVER={os.getenv('DB_SERVER')};"
-    f"DATABASE={os.getenv('DB_NAME')};"
-    f"UID={os.getenv('DB_USER')};"
-    f"PWD={os.getenv('DB_PASSWORD')};"
-    "TrustServerCertificate=yes"
-)
 
 def get_db_connection():
-    """Create and return a database connection"""
+    """Create and return an optimized database connection"""
+    conn_str = (
+        "DRIVER={ODBC Driver 18 for SQL Server};"
+        "SERVER=100.97.52.112;"
+        "DATABASE=HistorianData;"
+        "UID=mpp;"
+        "PWD=MPP_DataBase_2024##;"
+        "TrustServerCertificate=yes;"
+        "MARS_Connection=yes;"
+        "Packet Size=32768"
+    )
     try:
         conn = pyodbc.connect(conn_str)
         return conn
@@ -53,82 +51,84 @@ def get_db_connection():
         logger.error(f"Database connection error: {str(e)}")
         raise
 
-def initialize_tags():
-    """Initialize tags from database"""
-    global _all_tags, _last_refresh
-    try:
-        conn = get_db_connection()
-        with conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT TagName FROM TagData WITH (NOLOCK) ORDER BY TagName")
-            with _tags_lock:
-                _all_tags = [row[0] for row in cursor.fetchall()]
-                _last_refresh = time.time()
-                logger.info(f"Initialized {len(_all_tags)} tags")
-    except Exception as e:
-        logger.error(f"Error initializing tags: {str(e)}")
-        _all_tags = []
-
 # Create Flask app
 app = Flask(__name__)
-
-# Configure CORS
-cors_origins = os.getenv('CORS_ORIGINS', '*')
-CORS(app, resources={r"/api/*": {"origins": cors_origins.split(',')}})
+CORS(app)
 
 # Ensure directories exist
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Initialize tags at startup
-initialize_tags()
-
 @app.route('/status', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
-    global _all_tags
-    return jsonify({
-        "status": "healthy",
-        "environment": FLASK_ENV,
-        "tags_loaded": len(_all_tags),
-        "timestamp": datetime.now().isoformat()
-    }), 200
-
-@app.route('/api/tags/available', methods=['GET'])
-def get_available_tags():
-    """Get available tags with pagination and search"""
+    """Health check endpoint with detailed logging"""
     try:
-        global _all_tags
+        logger.info("Performing health check...")
         
-        # Refresh tags if empty
-        if not _all_tags:
-            with _tags_lock:
-                if not _all_tags:
-                    initialize_tags()
-        
-        # Get query parameters
-        search = request.args.get('search', '').strip().lower()
-        page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 250))
-        
-        # Filter tags if search term provided
-        filtered_tags = [tag for tag in _all_tags if search in tag.lower()] if search else _all_tags
-        
-        # Calculate pagination
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        paginated_tags = filtered_tags[start_idx:min(end_idx, len(filtered_tags))]
-        
-        return jsonify({
-            "tags": paginated_tags,
-            "total": len(filtered_tags),
-            "page": page,
-            "per_page": per_page,
-            "has_more": end_idx < len(filtered_tags)
-        })
+        # Check database connectivity
+        try:
+            conn = get_db_connection()
+            with conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+            db_status = "connected"
+        except Exception as e:
+            logger.error(f"Database health check failed: {str(e)}")
+            db_status = f"error: {str(e)}"
+            raise
+
+        # Check directory access
+        dir_status = {
+            "config_dir": os.path.exists(CONFIG_DIR) and os.access(CONFIG_DIR, os.W_OK),
+            "output_dir": os.path.exists(OUTPUT_DIR) and os.access(OUTPUT_DIR, os.W_OK)
+        }
+
+        # Check tag cache
+        tag_status = {
+            "count": len(_all_tags),
+            "last_refresh": datetime.fromtimestamp(_last_refresh).isoformat() if _last_refresh else None
+        }
+
+        response = {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "database": db_status,
+            "directories": dir_status,
+            "tags": tag_status
+        }
+        logger.info("Health check passed")
+        return jsonify(response), 200
+
     except Exception as e:
-        logger.error(f"Error in get_available_tags: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        error_response = {
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e)
+        }
+        logger.error(f"Health check failed: {str(e)}")
+        return jsonify(error_response), 500
+
+@lru_cache(maxsize=128)
+def get_filtered_tags(search_term: str) -> List[str]:
+    """Cache filtered tag results"""
+    if search_term:
+        return [tag for tag in _all_tags if search_term in tag.lower()]
+    return _all_tags
+
+def get_cache_key(search: str, page: int, per_page: int) -> str:
+    """Generate a cache key for the query"""
+    return f"{search}:{page}:{per_page}"
+
+@app.route('/api/tags', methods=['GET'])
+def get_available_tags():
+    try:
+        with open('available_tags.txt', 'r') as f:
+            tags = [line.strip() for line in f if line.strip()]
+        return jsonify({'tags': tags})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 404
+
 
 @app.route('/api/configurations', methods=['GET'])
 def list_configurations():
@@ -173,6 +173,7 @@ def create_configuration():
         else:
             return jsonify({"error": "Failed to create configuration"}), 500
     except Exception as e:
+        logger.error(f"Error creating configuration: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/configurations/save', methods=['POST'])
@@ -192,6 +193,7 @@ def save_configuration():
         else:
             return jsonify({"error": "Failed to save configuration"}), 500
     except Exception as e:
+        logger.error(f"Error saving configuration: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/configurations/delete', methods=['POST'])
@@ -210,6 +212,7 @@ def delete_configuration():
         else:
             return jsonify({"error": "Failed to delete configuration"}), 500
     except Exception as e:
+        logger.error(f"Error deleting configuration: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/process', methods=['POST'])
@@ -222,7 +225,9 @@ def process_data():
         end_date = datetime.strptime(data.get('endDate'), "%Y-%m-%d %H:%M:%S")
         frequency = data.get('frequency')
 
-        processor = HistorianProcessor(CONFIG_DIR, OUTPUT_DIR)
+        logger.info(f"Processing request for config: {config_name}, period: {start_date} to {end_date}")
+
+        processor = OptimizedHistorianProcessor(CONFIG_DIR, OUTPUT_DIR)
         tags = processor.read_configuration(config_name)
         valid_tags = processor.validate_tags(tags)
 
@@ -231,6 +236,7 @@ def process_data():
 
         dataframes = {}
         for tag in valid_tags:
+            logger.info(f"Processing tag: {tag}")
             df = processor.process_data(tag, start_date, end_date, frequency)
             if df is not None and not df.empty:
                 dataframes[tag] = df
@@ -239,20 +245,16 @@ def process_data():
             return jsonify({"error": "No data processed"}), 400
 
         # Merge dataframes
-        merged_df = None
-        for tag, df in dataframes.items():
-            if merged_df is None:
-                merged_df = df
-            else:
-                merged_df = pd.merge(merged_df, df, on='timestamp', how='outer')
+        logger.info("Merging dataframes")
+        merged_df = processor.merge_dataframes(dataframes, frequency)
 
-        merged_df = merged_df.sort_values('timestamp')
-        
+        # Save to file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_filename = f"{config_name.replace('.txt', '')}_{timestamp}.csv"
         output_path = os.path.join(OUTPUT_DIR, output_filename)
         
-        merged_df.to_csv(output_path, index=False)
+        logger.info(f"Saving to file: {output_filename}")
+        merged_df.to_csv(output_path, index=True)
 
         return jsonify({
             "message": "Data processed successfully",
@@ -269,10 +271,9 @@ def download_file(filename):
     try:
         return send_from_directory(OUTPUT_DIR, filename, as_attachment=True)
     except Exception as e:
+        logger.error(f"Error downloading file: {str(e)}")
         return jsonify({"error": f"Error downloading file: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    logger.info(f"Starting server in {FLASK_ENV} mode")
-    logger.info(f"CONFIG_DIR: {CONFIG_DIR}")
-    logger.info(f"OUTPUT_DIR: {OUTPUT_DIR}")
-    app.run(host=HOST, port=PORT, debug=FLASK_DEBUG)
+    logger.info(f"Starting server with CONFIG_DIR: {CONFIG_DIR}")
+    app.run(host='0.0.0.0', port=5000, debug=True)

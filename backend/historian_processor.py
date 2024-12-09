@@ -1,34 +1,20 @@
-# historian_processor.py
+
 import os
-from dotenv import load_dotenv
 import pandas as pd
 from datetime import datetime, timedelta
 import pyodbc
-from typing import List, Dict
+from typing import List, Dict, Generator, Optional
 import logging
 from logging.handlers import RotatingFileHandler
 import shutil
 
 
-load_dotenv()
-
 def setup_logging():
     """Set up logging configuration"""
-    os.makedirs('logs', exist_ok=True)
-    logger = logging.getLogger('HistorianProcessor')
-    
-    # Only add handlers if the logger doesn't have any
-    if not logger.handlers:
-        logger.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        file_handler = RotatingFileHandler('logs/historian_processor.log', maxBytes=10*1024*1024, backupCount=5)
-        file_handler.setFormatter(formatter)
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
-    
-    return logger
+    # This can be simplified since we're using Flask's logging
+    return logging.getLogger('HistorianProcessor')
+
+logger = setup_logging()
 
 class ConfigurationManager:
     def __init__(self, config_dir: str):
@@ -39,7 +25,7 @@ class ConfigurationManager:
             config_dir (str): Directory containing configuration files
         """
         self.config_dir = config_dir
-        self.logger = setup_logging()
+        self.logger = logger
         
         # Create config directory if it doesn't exist
         if not os.path.exists(self.config_dir):
@@ -170,103 +156,53 @@ class ConfigurationManager:
             self.logger.error(f"Error deleting configuration file {name}: {str(e)}")
             return False
 
-    def add_tags(self, name: str, new_tags: List[str]) -> bool:
-        """
-        Add tags to an existing configuration file.
-        
-        Args:
-            name (str): Name of the configuration file
-            new_tags (List[str]): Tags to add
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            current_tags = set(self.read_configuration(name))
-            updated_tags = sorted(list(current_tags.union(new_tags)))
-            return self.update_configuration(name, updated_tags)
-            
-        except Exception as e:
-            self.logger.error(f"Error adding tags to {name}: {str(e)}")
-            return False
-
-    def remove_tags(self, name: str, tags_to_remove: List[str]) -> bool:
-        """
-        Remove tags from an existing configuration file.
-        
-        Args:
-            name (str): Name of the configuration file
-            tags_to_remove (List[str]): Tags to remove
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            current_tags = set(self.read_configuration(name))
-            updated_tags = sorted(list(current_tags - set(tags_to_remove)))
-            return self.update_configuration(name, updated_tags)
-            
-        except Exception as e:
-            self.logger.error(f"Error removing tags from {name}: {str(e)}")
-            return False
-        
-def convert_time_to_minutes(time_str: str) -> int:
-    """Convert time string in HH:MM:SS format to total minutes."""
-    try:
-        hours, minutes, seconds = map(int, time_str.split(':'))
-        total_minutes = hours * 60 + minutes + (seconds / 60)
-        return round(total_minutes)  # Round to nearest minute
-    except Exception as e:
-        raise ValueError(f"Invalid time format. Expected HH:MM:SS, got {time_str}. Error: {str(e)}")
-
-class HistorianProcessor:
+class OptimizedHistorianProcessor:
     def __init__(self, config_dir: str, output_dir: str):
         """Initialize the Historian processor."""
         self.config_dir = config_dir
         self.output_dir = output_dir
-        self.logger = setup_logging()
-        
-        # Database connection string using environment variables
-        conn_str = (
-            "DRIVER={ODBC Driver 18 for SQL Server};"
-            f"SERVER={os.getenv('DB_SERVER')};"
-            f"DATABASE={os.getenv('DB_NAME')};"
-            f"UID={os.getenv('DB_USER')};"
-            f"PWD={os.getenv('DB_PASSWORD')};"
-            "TrustServerCertificate=yes"
-        )
+        self.logger = logger
         
         # Create output directory if it doesn't exist
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
             self.logger.info(f"Created output directory: {self.output_dir}")
 
-    def list_configuration_files(self) -> List[str]:
-        """List all txt configuration files."""
-        if not os.path.exists(self.config_dir):
-            raise FileNotFoundError(f"Configuration directory not found: {self.config_dir}")
-        return [f for f in os.listdir(self.config_dir) if f.endswith('.txt')]
+    def get_db_connection(self) -> pyodbc.Connection:
+        """Create and return an optimized database connection"""
+        conn_str = (
+            "DRIVER={ODBC Driver 18 for SQL Server};"
+            "SERVER=100.97.52.112;"
+            "DATABASE=HistorianData;"
+            "UID=mpp;"
+            "PWD=MPP_DataBase_2024##;"
+            "TrustServerCertificate=yes;"
+            "MARS_Connection=yes;"
+            "Packet Size=32768"
+        )
+        return pyodbc.connect(conn_str)
+
+    @staticmethod
+    def convert_time_to_minutes(time_str: str) -> int:
+        """Convert time string in HH:MM:SS format to total minutes."""
+        try:
+            hours, minutes, seconds = map(int, time_str.split(':'))
+            total_minutes = hours * 60 + minutes + (seconds / 60)
+            return round(total_minutes)
+        except Exception as e:
+            raise ValueError(f"Invalid time format. Expected HH:MM:SS, got {time_str}. Error: {str(e)}")
 
     def read_configuration(self, config_file: str) -> List[str]:
-        """
-        Read tag names from a configuration file.
-        
-        Args:
-            config_file (str): Name of the configuration file
-            
-        Returns:
-            List[str]: List of tag names with prefix
-        """
+        """Read configuration file and return list of tags."""
         config_path = os.path.join(self.config_dir, config_file)
         try:
             with open(config_path, 'r') as f:
-                # Read lines, remove whitespace, empty lines, add prefix
                 tags = []
                 for line in f:
                     tag = line.strip()
                     if tag:
                         if tag.endswith('.F_CV.csv'):
-                            tag = tag[:-9]  # Remove .F_CV.csv
+                            tag = tag[:-9]
                         if not tag.startswith('MELSRV01.'):
                             tag = f"MELSRV01.{tag}"
                         tags.append(tag)
@@ -276,306 +212,148 @@ class HistorianProcessor:
             return []
 
     def validate_tags(self, tags: List[str]) -> List[str]:
-        """
-        Validate that specified tags exist in the database using a single query.
-        
-        Args:
-            tags (List[str]): List of tag names to validate
-            
-        Returns:
-            List[str]: List of existing tags
-        """
+        """Validate tags exist in database."""
         try:
-            with pyodbc.connect(self.conn_str) as conn:
+            with self.get_db_connection() as conn:
                 cursor = conn.cursor()
-                # Create a temporary table for the tags
-                cursor.execute("""
-                    IF OBJECT_ID('tempdb..#TagList') IS NOT NULL DROP TABLE #TagList;
-                    CREATE TABLE #TagList (TagName NVARCHAR(255));
-                """)
+                valid_tags = []
                 
-                # Insert all tags in a single batch
-                tags_values = ', '.join(f"('{tag}')" for tag in tags)
-                cursor.execute(f"INSERT INTO #TagList (TagName) VALUES {tags_values}")
+                for tag in tags:
+                    cursor.execute("""
+                        SELECT TOP 1 1 
+                        FROM TagData WITH (NOLOCK) 
+                        WHERE TagName = ?
+                    """, (tag,))
+                    
+                    if cursor.fetchone():
+                        valid_tags.append(tag)
+                    else:
+                        self.logger.warning(f"Tag not found in database: {tag}")
                 
-                # Single query to get existing tags
-                cursor.execute("""
-                    SELECT DISTINCT t.TagName 
-                    FROM #TagList t
-                    INNER JOIN (
-                        SELECT DISTINCT TagName 
-                        FROM TagData
-                    ) td ON t.TagName = td.TagName
-                """)
-                
-                existing_tags = [row[0] for row in cursor.fetchall()]
-                
-                # Log missing tags
-                missing_tags = set(tags) - set(existing_tags)
-                for tag in missing_tags:
-                    self.logger.warning(f"Warning: Tag not found in database: {tag}")
-                
-                return existing_tags
+                return valid_tags
                 
         except Exception as e:
             self.logger.error(f"Error validating tags: {str(e)}")
             return []
 
-    def process_data(self, tag: str, start_date: datetime, end_date: datetime, frequency: str) -> pd.DataFrame:
-        """
-        Query and process data according to date range and frequency.
-        
-        Args:
-            tag (str): Tag name
-            start_date (datetime): Start date for filtering
-            end_date (datetime): End date for filtering
-            frequency (str): Data frequency in HH:MM:SS format
-        """
+    def process_data(self, tag: str, start_date: datetime, end_date: datetime, frequency: str) -> Optional[pd.DataFrame]:
+        """Process data for a given tag"""
         try:
-            # Convert frequency from HH:MM:SS to minutes
-            interval_minutes = convert_time_to_minutes(frequency)
-            self.logger.debug(f"Converted frequency {frequency} to {interval_minutes} minutes")
-
-            with pyodbc.connect(self.conn_str) as conn:
-                cursor = conn.cursor()
-                
-                # Get tag statistics
-                cursor.execute("""
-                    SELECT 
-                        COUNT(*) as TotalReadings,
-                        MIN(Timestamp) as FirstReading,
-                        MAX(Timestamp) as LastReading,
-                        MIN(Value) as MinValue,
-                        MAX(Value) as MaxValue,
-                        AVG(Value) as AvgValue
-                    FROM TagData 
-                    WHERE TagName = ?
-                    AND Timestamp BETWEEN ? AND ?
-                """, (tag, start_date, end_date))
-                
-                stats = cursor.fetchone()
-                
-                if not stats or stats.TotalReadings == 0:
-                    self.logger.warning(f"No data found for tag {tag} in specified date range")
-                    return None
-                
-                self.logger.info(f"\nStatistics for {tag}:")
-                self.logger.info(f"Total readings: {stats.TotalReadings:,}")
-                self.logger.info(f"Date range: {stats.FirstReading} to {stats.LastReading}")
-                self.logger.info(f"Value range: {stats.MinValue:.2f} to {stats.MaxValue:.2f}")
-                self.logger.info(f"Average value: {stats.AvgValue:.2f}")
-                
-                # Get the data with proper interval
-                cursor.execute("""
-                    SELECT 
-                        interval_time as timestamp,
-                        AVG(Value) as value
-                    FROM (
-                        SELECT 
-                            Value,
-                            DATEADD(MINUTE, 
-                                (DATEDIFF(MINUTE, '2000-01-01', Timestamp) / ?) * ?,
-                                '2000-01-01'
-                            ) as interval_time
-                        FROM TagData 
-                        WHERE TagName = ?
-                        AND Timestamp BETWEEN ? AND ?
-                    ) as SubQuery
-                    GROUP BY interval_time
-                    ORDER BY interval_time
-                """, (interval_minutes, interval_minutes, tag, start_date, end_date))
-                
-                # Convert to DataFrame
-                rows = cursor.fetchall()
-                if not rows:
-                    self.logger.warning(f"No data returned for {tag} after resampling")
-                    return None
-                
-                df = pd.DataFrame.from_records(
-                    rows,
-                    columns=['timestamp', tag]
-                )
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
-                
-                self.logger.info(f"\nProcessed data points: {len(df):,}")
-                self.logger.info(f"Data from: {df['timestamp'].min()}")
-                self.logger.info(f"Data until: {df['timestamp'].max()}")
-                
-                return df
-                
+            self.logger.info(f"Processing data for tag {tag}")
+            dataframes = []
+            
+            # Collect chunks from the generator
+            for chunk in self.process_data_in_chunks(tag, start_date, end_date, frequency):
+                if chunk is not None and not chunk.empty:
+                    dataframes.append(chunk)
+                    self.logger.debug(f"Collected chunk with {len(chunk)} rows")
+            
+            # If no data was collected, return None
+            if not dataframes:
+                self.logger.warning(f"No data collected for tag {tag}")
+                return None
+            
+            # Concatenate all chunks and sort by timestamp
+            result = pd.concat(dataframes)
+            result.sort_index(inplace=True)
+            
+            # Log summary statistics
+            self.logger.info(f"Processed data for {tag}:")
+            self.logger.info(f"Total data points: {len(result):,}")
+            self.logger.info(f"Date range: {result.index.min()} to {result.index.max()}")
+            
+            return result
+            
         except Exception as e:
-            self.logger.error(f"Error processing tag {tag}: {str(e)}")
+            self.logger.error(f"Error processing data for tag {tag}: {str(e)}")
             return None
 
+    def process_data_in_chunks(self, tag: str, start_date: datetime, end_date: datetime, frequency: str) -> Generator[pd.DataFrame, None, None]:
+        """Generate dataframes in chunks to optimize memory usage"""
+        try:
+            interval_minutes = self.convert_time_to_minutes(frequency)
+            chunk_size = timedelta(days=1)  # Process one day at a time
 
-def manage_configurations():
-    """Function to manage configuration files"""
-    CONFIG_DIR = "/home/mpp/Historian_csv_processor/configurations"
-    config_manager = ConfigurationManager(CONFIG_DIR)
-    
-    while True:
-        print("\nConfiguration Management Menu:")
-        print("1. List all configurations")
-        print("2. Create new configuration")
-        print("3. View configuration content")
-        print("4. Add tags to configuration")
-        print("5. Remove tags from configuration")
-        print("6. Delete configuration")
-        print("7. Return to main menu")
-        
-        choice = input("\nEnter your choice (1-7): ").strip()
-        
-        if choice == '1':
-            configs = config_manager.list_configurations()
-            if configs:
-                print("\nAvailable configurations:")
-                for i, config in enumerate(configs, 1):
-                    print(f"{i}. {config}")
-            else:
-                print("\nNo configuration files found.")
-                
-        elif choice == '2':
-            name = input("\nEnter configuration name (without .txt): ").strip()
-            print("Enter tags (one per line, empty line to finish):")
-            tags = []
-            while True:
-                tag = input().strip()
-                if not tag:
-                    break
-                tags.append(tag)
-            
-            if config_manager.create_configuration(name, tags):
-                print(f"\nConfiguration {name}.txt created successfully.")
-            
-        elif choice == '3':
-            configs = config_manager.list_configurations()
-            if not configs:
-                print("\nNo configuration files found.")
-                continue
-                
-            print("\nAvailable configurations:")
-            for i, config in enumerate(configs, 1):
-                print(f"{i}. {config}")
-                
-            try:
-                idx = int(input("\nEnter configuration number: ").strip()) - 1
-                if 0 <= idx < len(configs):
-                    tags = config_manager.read_configuration(configs[idx])
-                    print("\nTags in configuration:")
-                    for tag in tags:
-                        print(tag)
-                else:
-                    print("Invalid selection.")
-            except ValueError:
-                print("Please enter a valid number.")
-                
-        elif choice == '4':
-            configs = config_manager.list_configurations()
-            if not configs:
-                print("\nNo configuration files found.")
-                continue
-                
-            print("\nAvailable configurations:")
-            for i, config in enumerate(configs, 1):
-                print(f"{i}. {config}")
-                
-            try:
-                idx = int(input("\nEnter configuration number: ").strip()) - 1
-                if 0 <= idx < len(configs):
-                    print("Enter tags to add (one per line, empty line to finish):")
-                    new_tags = []
-                    while True:
-                        tag = input().strip()
-                        if not tag:
-                            break
-                        new_tags.append(tag)
-                    
-                    if config_manager.add_tags(configs[idx], new_tags):
-                        print(f"\nTags added to {configs[idx]} successfully.")
-                else:
-                    print("Invalid selection.")
-            except ValueError:
-                print("Please enter a valid number.")
-                
-        elif choice == '5':
-            configs = config_manager.list_configurations()
-            if not configs:
-                print("\nNo configuration files found.")
-                continue
-                
-            print("\nAvailable configurations:")
-            for i, config in enumerate(configs, 1):
-                print(f"{i}. {config}")
-                
-            try:
-                idx = int(input("\nEnter configuration number: ").strip()) - 1
-                if 0 <= idx < len(configs):
-                    tags = config_manager.read_configuration(configs[idx])
-                    print("\nCurrent tags:")
-                    for i, tag in enumerate(tags, 1):
-                        print(f"{i}. {tag}")
-                    
-                    print("\nEnter tag numbers to remove (comma-separated):")
-                    selections = input().strip()
-                    try:
-                        indices = [int(x.strip()) - 1 for x in selections.split(',')]
-                        tags_to_remove = [tags[i] for i in indices if 0 <= i < len(tags)]
-                        
-                        if config_manager.remove_tags(configs[idx], tags_to_remove):
-                            print(f"\nTags removed from {configs[idx]} successfully.")
-                    except ValueError:
-                        print("Please enter valid numbers.")
-                else:
-                    print("Invalid selection.")
-            except ValueError:
-                print("Please enter a valid number.")
-                
-        elif choice == '6':
-            configs = config_manager.list_configurations()
-            if not configs:
-                print("\nNo configuration files found.")
-                continue
-                
-            print("\nAvailable configurations:")
-            for i, config in enumerate(configs, 1):
-                print(f"{i}. {config}")
-                
-            try:
-                idx = int(input("\nEnter configuration number to delete: ").strip()) - 1
-                if 0 <= idx < len(configs):
-                    confirm = input(f"Are you sure you want to delete {configs[idx]}? (yes/no): ").strip().lower()
-                    if confirm == 'yes':
-                        if config_manager.delete_configuration(configs[idx]):
-                            print(f"\nConfiguration {configs[idx]} deleted successfully.")
-                else:
-                    print("Invalid selection.")
-            except ValueError:
-                print("Please enter a valid number.")
-                
-        elif choice == '7':
-            break
-        
-        else:
-            print("Invalid choice. Please try again.")
+            current_chunk_start = start_date
+            while current_chunk_start < end_date:
+                current_chunk_end = min(current_chunk_start + chunk_size, end_date)
 
-def main():
-    while True:
-        print("\nMain Menu:")
-        print("1. Process Data")
-        print("2. Manage Configurations")
-        print("3. Exit")
-        
-        choice = input("\nEnter your choice (1-3): ").strip()
-        
-        if choice == '1':
-            process_data()
-        elif choice == '2':
-            manage_configurations()
-        elif choice == '3':
-            print("\nExiting program.")
-            break
-        else:
-            print("Invalid choice. Please try again.")
+                try:
+                    with self.get_db_connection() as conn:
+                        query = """
+                        WITH TimeBuckets AS (
+                            SELECT 
+                                DATEADD(MINUTE, 
+                                    (DATEDIFF(MINUTE, '2000-01-01', Timestamp) / ?) * ?,
+                                    '2000-01-01'
+                                ) as bucket_timestamp,
+                                Value
+                            FROM TagData WITH (NOLOCK)
+                            WHERE TagName = ?
+                            AND Timestamp >= ?
+                            AND Timestamp < ?
+                        )
+                        SELECT 
+                            bucket_timestamp as timestamp,
+                            AVG(Value) as value
+                        FROM TimeBuckets
+                        GROUP BY bucket_timestamp
+                        ORDER BY bucket_timestamp
+                        """
 
-if __name__ == "__main__":
-    main()
+                        # Convert to list of tuples first to avoid pandas warning
+                        cursor = conn.cursor()
+                        cursor.execute(query, (
+                            interval_minutes,
+                            interval_minutes,
+                            tag,
+                            current_chunk_start,
+                            current_chunk_end
+                        ))
+                        rows = cursor.fetchall()
+
+                        if rows:
+                            # Create DataFrame from the list of tuples
+                            df_chunk = pd.DataFrame.from_records(
+                                rows,
+                                columns=['timestamp', 'value']
+                            )
+                            df_chunk.set_index('timestamp', inplace=True)
+                            df_chunk.columns = [tag]
+                            self.logger.debug(f"Yielding chunk with {len(df_chunk)} rows for {tag}")
+                            yield df_chunk
+
+                except Exception as chunk_error:
+                        self.logger.error(f"Error processing chunk for {tag} from {current_chunk_start} to {current_chunk_end}: {str(chunk_error)}")
+                        # Continue to next chunk even if this one fails
+
+                current_chunk_start = current_chunk_end
+
+        except Exception as e:
+            self.logger.error(f"Error in process_data_in_chunks for {tag}: {str(e)}")
+            yield None
+
+    def merge_dataframes(self, dfs: Dict[str, pd.DataFrame], frequency: str) -> pd.DataFrame:
+        """Efficiently merge multiple dataframes"""
+        if not dfs:
+            return pd.DataFrame()
+
+        # Start with the first dataframe
+        merged_df = next(iter(dfs.values()))
+
+        # Merge remaining dataframes
+        for tag, df in dfs.items():
+            if df is not merged_df:
+                merged_df = pd.merge(
+                    merged_df,
+                    df,
+                    left_index=True,
+                    right_index=True,
+                    how='outer'
+                )
+
+        # Sort and handle missing values using new preferred methods
+        merged_df.sort_index(inplace=True)
+        merged_df = merged_df.ffill().bfill()  # Chain the operations instead of using method parameter
+
+        return merged_df

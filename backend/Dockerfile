@@ -1,3 +1,4 @@
+# Dockerfile for backend
 FROM python:3.10-slim
 
 WORKDIR /app
@@ -27,7 +28,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install gunicorn
 
-# Copy application files
+# Copy application files including available_tags.txt
 COPY . .
 
 # Create required directories
@@ -37,5 +38,4 @@ RUN mkdir -p /app/configurations \
 
 EXPOSE 5000
 
-# Use gunicorn instead of Flask development server
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--timeout", "120", "app:app"]
+CMD ["gunicorn", "--config", "/app/gunicorn.conf.py", "app:app"]
