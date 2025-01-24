@@ -4,11 +4,15 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "hostname:5002:5000"
+      - "100.97.52.112:5002:5000"
     volumes:
+      - ./logs:/app/logs
       - type: bind
         source: ${PWD}/configurations
         target: /app/configurations
+      - type: bind
+        source: ${PWD}/backend/available_tags.txt
+        target: /app/available_tags.txt        
       - processed_data:/tmp/csv_processor_output
     environment:
       - FLASK_ENV=production
@@ -19,33 +23,66 @@ services:
       resources:
         limits:
           memory: 8G
+          cpus: '2'
         reservations:
           memory: 4G
+          cpus: '1'
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/status || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-    restart: unless-stopped
+    restart: on-failure:3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "{{.Name}}"
+    networks:
+      - app-network
+      - mpp_server_default
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "hostname:3002:3000"
+      - "100.97.52.112:3002:3000"
     environment:
       - NODE_ENV=production
       - WDS_SOCKET_PORT=0
       - CHOKIDAR_USEPOLLING=true
       - PORT=3000
       - HOST=0.0.0.0
-      - REACT_APP_API_URL=http://hostname:5002/api
+      - REACT_APP_API_URL=http://100.97.52.112:5002/api
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
     depends_on:
       backend:
         condition: service_healthy
-    restart: unless-stopped
+    restart: on-failure:3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "{{.Name}}"
+    networks:
+      - app-network
 
 volumes:
   processed_data:
+
+networks:
+  app-network:
+    driver: bridge
+  mpp_server_default:
+    external: true
