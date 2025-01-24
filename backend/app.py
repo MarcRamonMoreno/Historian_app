@@ -4,23 +4,86 @@ from flask_cors import CORS
 import os
 import logging
 from historian_processor import OptimizedHistorianProcessor, ConfigurationManager
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import pyodbc
 import threading
-from typing import List, Optional
+from typing import List
+import logging
+import sys
+from logging.handlers import RotatingFileHandler
+import os
 
 # Cache for filtered and paginated results
 _tag_cache = {}
 _cache_time = {}
 CACHE_DURATION = 300  # 5 minutes
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("app")
+# Create logs directory if it doesn't exist
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+# Configure logging
+def setup_logging():
+    # Create formatters and handlers
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # File handler for all logs
+    file_handler = RotatingFileHandler(
+        'logs/historian.log',
+        maxBytes=10485760,  # 10MB
+        backupCount=10
+    )
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.DEBUG)
+    
+    # Console handler for info and above
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(logging.INFO)
+    
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    
+    # Configure Flask app logger
+    app_logger = logging.getLogger('historian_app')
+    app_logger.setLevel(logging.DEBUG)
+    
+    # Configure SQLAlchemy logger for SQL queries
+    sql_logger = logging.getLogger('sqlalchemy.engine')
+    sql_logger.setLevel(logging.INFO)
+    
+    return app_logger
+
+# Initialize logger
+logger = setup_logging()
+
+# Create Flask app
+app = Flask(__name__)
+CORS(app)
+
+# Add this to see request details
+@app.before_request
+def log_request_info():
+    logger.debug('Headers: %s', request.headers)
+    logger.debug('Body: %s', request.get_data())
+
+# Add this to log response details
+@app.after_request
+def log_response_info(response):
+    logger.debug('Response: %s', response.get_data())
+    return response
+
+# Update your error handler
+@app.errorhandler(Exception)
+def handle_exception(e):
+    logger.exception("Unhandled exception: %s", str(e))
+    return jsonify({"error": str(e)}), 500
 
 # Constants
 CONFIG_DIR = os.path.abspath(os.path.join(os.getcwd(), "configurations"))
@@ -32,14 +95,15 @@ _tags_lock = threading.Lock()
 _last_refresh = 0
 
 
+    
 def get_db_connection():
     """Create and return an optimized database connection"""
     conn_str = (
         "DRIVER={ODBC Driver 18 for SQL Server};"
-        "SERVER=hostname;"
-        "DATABASE=database_name;"
-        "UID=database_username;"
-        "PWD=database_password;"
+        "SERVER=100.97.52.112;"
+        "DATABASE=HistorianData;"
+        "UID=mpp;"
+        "PWD=MPP_DataBase_2024##;"
         "TrustServerCertificate=yes;"
         "MARS_Connection=yes;"
         "Packet Size=32768"
@@ -228,6 +292,8 @@ def process_data():
         logger.info(f"Processing request for config: {config_name}, period: {start_date} to {end_date}")
 
         processor = OptimizedHistorianProcessor(CONFIG_DIR, OUTPUT_DIR)
+        if not processor.test_database_functionality():
+            logger.warning("Database functionality tests failed - some features may not work correctly")
         tags = processor.read_configuration(config_name)
         valid_tags = processor.validate_tags(tags)
 
