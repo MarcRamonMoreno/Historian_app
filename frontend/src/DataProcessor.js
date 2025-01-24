@@ -4,7 +4,7 @@ import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { useMemoizedFetch } from './hooks/useAPI';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://hostname:5002/api';
+const API_URL = process.env.REACT_APP_API_URL || 'http://100.97.52.112:5002/api';
 
 function DataProcessor() {
   const [selectedConfig, setSelectedConfig] = useState('');
