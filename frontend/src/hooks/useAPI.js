@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://100.97.52.112:5002/api';
+const API_URL = process.env.REACT_APP_API_URL || 'http://hostname:5002/api';
 
 export const useAPI = () => {
   const [loading, setLoading] = useState(false);
