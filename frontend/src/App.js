@@ -4,7 +4,7 @@ import ConfigManager from './ConfigManager';
 import { Button } from './components/ui/button';
 
 function App() {
-  const [currentView, setCurrentView] = useState('processor'); // 'processor' or 'config'
+  const [currentView, setCurrentView] = useState('processor');
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -33,7 +33,6 @@ function App() {
           </div>
         </div>
       </div>
-
       <main className="py-6">
         {currentView === 'processor' ? <DataProcessor /> : <ConfigManager />}
       </main>

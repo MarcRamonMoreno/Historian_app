@@ -19,6 +19,11 @@ services:
       - FLASK_DEBUG=0
       - PYTHONUNBUFFERED=1
       - GUNICORN_CMD_ARGS="--config=/app/gunicorn.conf.py"
+      - HISTORIAN_SERVER=MELSRV01\\WIN911
+      - HISTORIAN_USER=mpp
+      - HISTORIAN_PASSWORD=Melissa2014
+    extra_hosts:
+      - "MELSRV01: 172.16.0.1"
     deploy:
       resources:
         limits:
@@ -45,38 +50,16 @@ services:
       - mpp_server_default
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    ports:
-      - "100.97.52.112:3002:3000"
-    environment:
-      - NODE_ENV=production
-      - WDS_SOCKET_PORT=0
-      - CHOKIDAR_USEPOLLING=true
-      - PORT=3000
-      - HOST=0.0.0.0
-      - REACT_APP_API_URL=http://100.97.52.112:5002/api
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '1'
-        reservations:
-          memory: 1G
-          cpus: '0.5'
-    depends_on:
-      backend:
-        condition: service_healthy
-    restart: on-failure:3
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        tag: "{{.Name}}"
-    networks:
-      - app-network
+      build:
+        context: ./frontend
+        dockerfile: Dockerfile
+      ports:
+        - "100.97.52.112:3002:3000"
+      environment:
+        - NODE_ENV=development
+        - REACT_APP_API_URL=http://100.97.52.112:5002/api
+      networks:
+        - app-network
 
 volumes:
   processed_data:

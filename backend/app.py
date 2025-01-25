@@ -93,27 +93,19 @@ OUTPUT_DIR = "/tmp/csv_processor_output"
 _all_tags: List[str] = []
 _tags_lock = threading.Lock()
 _last_refresh = 0
-
-
     
 def get_db_connection():
-    """Create and return an optimized database connection"""
     conn_str = (
-        "DRIVER={ODBC Driver 18 for SQL Server};"
-        "SERVER=100.97.52.112;"
-        "DATABASE=HistorianData;"
-        "UID=mpp;"
-        "PWD=MPP_DataBase_2024##;"
-        "TrustServerCertificate=yes;"
-        "MARS_Connection=yes;"
-        "Packet Size=32768"
+        'DRIVER={ODBC Driver 18 for SQL Server};'
+        'SERVER=172.16.0.1,1433\\WIN911;'  # Using IP directly
+        'DATABASE=master;'
+        'UID=mpp;'
+        'PWD=Melissa2014;'
+        'TrustServerCertificate=yes;'
+        'Encrypt=no;'
+        'LoginTimeout=60'  # Increased timeout
     )
-    try:
-        conn = pyodbc.connect(conn_str)
-        return conn
-    except Exception as e:
-        logger.error(f"Database connection error: {str(e)}")
-        raise
+    return pyodbc.connect(conn_str)
 
 # Create Flask app
 app = Flask(__name__)
@@ -125,7 +117,6 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 @app.route('/status', methods=['GET'])
 def health_check():
-    """Health check endpoint with detailed logging"""
     try:
         logger.info("Performing health check...")
         
@@ -136,32 +127,28 @@ def health_check():
                 cursor = conn.cursor()
                 cursor.execute("SELECT 1")
                 cursor.fetchone()
+                
+                cursor.execute("SELECT TOP 1 * FROM OPENQUERY(HISTORIAN_LINK, 'SELECT tagname FROM ihtags')")
+                tag_result = cursor.fetchone()
+                historian_status = "connected" if tag_result else "no tags found"
+                
             db_status = "connected"
         except Exception as e:
             logger.error(f"Database health check failed: {str(e)}")
             db_status = f"error: {str(e)}"
+            historian_status = "disconnected"
             raise
-
-        # Check directory access
-        dir_status = {
-            "config_dir": os.path.exists(CONFIG_DIR) and os.access(CONFIG_DIR, os.W_OK),
-            "output_dir": os.path.exists(OUTPUT_DIR) and os.access(OUTPUT_DIR, os.W_OK)
-        }
-
-        # Check tag cache
-        tag_status = {
-            "count": len(_all_tags),
-            "last_refresh": datetime.fromtimestamp(_last_refresh).isoformat() if _last_refresh else None
-        }
 
         response = {
             "status": "healthy",
             "timestamp": datetime.now().isoformat(),
             "database": db_status,
-            "directories": dir_status,
-            "tags": tag_status
+            "historian": historian_status,
+            "directories": {
+                "config_dir": os.path.exists(CONFIG_DIR) and os.access(CONFIG_DIR, os.W_OK),
+                "output_dir": os.path.exists(OUTPUT_DIR) and os.access(OUTPUT_DIR, os.W_OK)
+            }
         }
-        logger.info("Health check passed")
         return jsonify(response), 200
 
     except Exception as e:
@@ -170,8 +157,91 @@ def health_check():
             "timestamp": datetime.now().isoformat(),
             "error": str(e)
         }
-        logger.error(f"Health check failed: {str(e)}")
         return jsonify(error_response), 500
+    
+@app.route('/api/export', methods=['POST'])
+def export_data():
+    try:
+        data = request.json
+        tags = data.get('tags', [])
+        start_time = datetime.strptime(data.get('startTime'), "%Y-%m-%d %H:%M:%S") 
+        end_time = datetime.strptime(data.get('endTime'), "%Y-%m-%d %H:%M:%S")
+        
+        logger.info(f"Starting export for {len(tags)} tags from {start_time} to {end_time}")
+        
+        all_data = []
+        query_step = timedelta(hours=6)
+
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            for tag in tags:
+                if not tag.startswith('MELSRV01.'):
+                    tag = f"MELSRV01.{tag}"
+                if not tag.endswith('.F_CV'):
+                    tag = f"{tag}.F_CV"
+                
+                current_time = start_time
+                while current_time <= end_time:
+                    chunk_end = min(current_time + query_step, end_time)
+                    
+                    query = f"""
+                        SELECT * FROM OPENQUERY(
+                            HISTORIAN_LINK,
+                            'SELECT tagname, timestamp, value, quality 
+                             FROM ihrawdata 
+                             WHERE tagname = ''{tag}''
+                             AND timestamp >= ''{current_time.strftime("%Y-%m-%d %H:%M:%S")}'' 
+                             AND timestamp <= ''{chunk_end.strftime("%Y-%m-%d %H:%M:%S")}''
+                             AND samplingmode = ''Interpolated''
+                             AND intervalmilliseconds = 5000'
+                        )"""
+                    
+                    cursor.execute(query)
+                    chunk_data = cursor.fetchall()
+                    if chunk_data:
+                        formatted_data = [(row.tagname, row.timestamp, row.value, row.quality) for row in chunk_data]
+                        all_data.extend(formatted_data)
+                    
+                    current_time += query_step
+            
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Database error: {str(e)}")
+            return jsonify({"error": f"Database error: {str(e)}"}), 500
+        
+        if not all_data:
+            return jsonify({"error": "No data found for the specified criteria"}), 404
+          
+        # Create DataFrame with all data
+        df = pd.DataFrame(all_data, columns=['tagname', 'timestamp', 'value', 'quality'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        
+        # Pivot the data to get timestamps as index and tags as columns
+        pivoted_df = df.pivot(index='timestamp', columns='tagname', values='value')
+        
+        # Clean up column names (remove MELSRV01. and .F_CV)
+        pivoted_df.columns = pivoted_df.columns.str.replace('MELSRV01.', '').str.replace('.F_CV', '')
+        
+        # Sort by timestamp
+        pivoted_df.sort_index(inplace=True)
+        
+        # Save to file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"historian_export_{timestamp}.csv"
+        output_path = os.path.join(OUTPUT_DIR, filename)
+        pivoted_df.to_csv(output_path)
+        
+        return jsonify({
+            "message": "Data exported successfully",
+            "filename": filename
+        })
+        
+    except Exception as e:
+        logger.error(f"Error exporting data: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @lru_cache(maxsize=128)
 def get_filtered_tags(search_term: str) -> List[str]:
@@ -281,7 +351,6 @@ def delete_configuration():
 
 @app.route('/api/process', methods=['POST'])
 def process_data():
-    """Process data for given configuration and time range"""
     try:
         data = request.json
         config_name = data.get('configuration')
@@ -292,10 +361,11 @@ def process_data():
         logger.info(f"Processing request for config: {config_name}, period: {start_date} to {end_date}")
 
         processor = OptimizedHistorianProcessor(CONFIG_DIR, OUTPUT_DIR)
-        if not processor.test_database_functionality():
+        if not processor.test_database_functionality():  # Using the correct method
             logger.warning("Database functionality tests failed - some features may not work correctly")
+
         tags = processor.read_configuration(config_name)
-        valid_tags = processor.validate_tags(tags)
+        valid_tags = processor.validate_tags(tags)  # This method uses get_db_connection internally
 
         if not valid_tags:
             return jsonify({"error": "No valid tags found"}), 400

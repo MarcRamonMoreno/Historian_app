@@ -1,71 +1,74 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Alert, AlertDescription } from './components/ui/alert';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
-import { useMemoizedFetch } from './hooks/useAPI';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://100.97.52.112:5002/api';
 
 function DataProcessor() {
   const [selectedConfig, setSelectedConfig] = useState('');
+  const [configurations, setConfigurations] = useState([]);
   const [startDate, setStartDate] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endDate, setEndDate] = useState('');
   const [endTime, setEndTime] = useState('');
-  const [frequency, setFrequency] = useState('00:10:00');
   const [status, setStatus] = useState('');
-  const [processedFiles, setProcessedFiles] = useState([]);
+  const [exportFile, setExportFile] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  const { 
-    data: configurationsData,
-    loading: configsLoading,
-    error: configsError,
-  } = useMemoizedFetch('/configurations');
-
-  const {
-    data: configTagsData,
-    loading: tagsLoading,
-    error: tagsError,
-  } = useMemoizedFetch(
-    selectedConfig ? `/configurations/${selectedConfig}/tags` : null,
-    [selectedConfig]
-  );
-
+  useEffect(() => {
+    const fetchConfigurations = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch(`${API_URL}/configurations`);
+        if (!response.ok) throw new Error('Failed to fetch configurations');
+        const data = await response.json();
+        setConfigurations(data.configurations.map(config => config.replace('.txt', '')) || []);
+      } catch (error) {
+        setError(error.message);
+        console.error('Error:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+  
+    fetchConfigurations();
+  }, []);
+  
+  // Update the handleSubmit
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedConfig) return;
-
     setStatus('Processing...');
-    setProcessedFiles([]);
-
+    setExportFile(null);
+  
     try {
       const startDateTime = `${startDate} ${startTime}`;
       const endDateTime = `${endDate} ${endTime}`;
-
-      const response = await fetch(`${API_URL}/process`, {
+  
+      const response = await fetch(`${API_URL}/process`, {  // Changed from /export to /process
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          configuration: selectedConfig,
+          configuration: `${selectedConfig}.txt`,  // Add .txt extension back
           startDate: startDateTime,
           endDate: endDateTime,
-          frequency,
         }),
       });
-
+  
       const data = await response.json();
       
       if (response.ok) {
         setStatus('Data processed successfully!');
-        setProcessedFiles(data.processed_files || []);
+        setExportFile(data.processed_files?.[0]);
       } else {
         throw new Error(data.error || 'Processing failed');
       }
     } catch (err) {
       setStatus(`Error: ${err.message}`);
-      setProcessedFiles([]);
+      setExportFile(null);
     }
   };
 
@@ -74,15 +77,15 @@ function DataProcessor() {
       <div className="max-w-2xl mx-auto bg-white rounded-lg shadow p-6">
         <h1 className="text-2xl font-bold mb-6">Historian Data Processor</h1>
         
-        {configsLoading && (
+        {loading && (
           <Alert className="mb-4">
             <AlertDescription>Loading configurations...</AlertDescription>
           </Alert>
         )}
 
-        {configsError && (
+        {error && (
           <Alert className="mb-4 bg-red-50 border-red-200 text-red-800">
-            <AlertDescription>Error loading configurations: {configsError}</AlertDescription>
+            <AlertDescription>Error: {error}</AlertDescription>
           </Alert>
         )}
 
@@ -93,39 +96,14 @@ function DataProcessor() {
               value={selectedConfig}
               onChange={(e) => setSelectedConfig(e.target.value)}
               className="w-full p-2 border rounded"
-              disabled={configsLoading}
+              required
             >
               <option value="">Select configuration</option>
-              {configurationsData?.configurations?.map((config) => (
-                <option key={config} value={config}>
-                  {config}
-                </option>
+              {configurations.map((config) => (
+                <option key={config} value={config}>{config.replace('.txt', '')}</option>
               ))}
             </select>
           </div>
-
-          {selectedConfig && (
-            <div className="space-y-2">
-              <label className="block text-sm font-medium">Configuration Tags:</label>
-              {tagsLoading ? (
-                <Alert>
-                  <AlertDescription>Loading tags...</AlertDescription>
-                </Alert>
-              ) : tagsError ? (
-                <Alert className="bg-red-50 border-red-200 text-red-800">
-                  <AlertDescription>Error loading tags: {tagsError}</AlertDescription>
-                </Alert>
-              ) : (
-                <div className="text-sm text-gray-600 max-h-40 overflow-y-auto p-2 border rounded">
-                  {configTagsData?.tags?.map((tag) => (
-                    <div key={tag} className="py-1">
-                      {tag}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
 
           <div className="space-y-2">
             <label className="block text-sm font-medium">Start Date and Time</label>
@@ -169,50 +147,31 @@ function DataProcessor() {
             </div>
           </div>
 
-          <div className="space-y-2">
-            <label className="block text-sm font-medium">Frequency (HH:MM:SS)</label>
-            <Input
-              type="text"
-              pattern="[0-9]{2}:[0-9]{2}:[0-9]{2}"
-              placeholder="00:10:00"
-              value={frequency}
-              onChange={(e) => setFrequency(e.target.value)}
-              required
-            />
-          </div>
-
           <Button 
             type="submit" 
             className="w-full"
-            disabled={!selectedConfig || configsLoading || tagsLoading}
+            disabled={!selectedConfig || loading}
           >
             Process Data
           </Button>
         </form>
 
         {status && (
-          <div>
-            <Alert className={`mt-4 ${status.includes('Error') ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
-              <AlertDescription>{status}</AlertDescription>
-            </Alert>
-            {processedFiles.length > 0 && (
-              <div className="mt-4 p-4 border rounded-lg">
-                <h3 className="font-medium mb-2">Download Processed Files:</h3>
-                <div className="space-y-2">
-                  {processedFiles.map((file) => (
-                    <div key={file} className="flex items-center">
-                      <a
-                        href={`${API_URL}/download/${file}`}
-                        download
-                        className="text-blue-600 hover:text-blue-800 underline"
-                      >
-                        {file}
-                      </a>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+          <Alert className={`mt-4 ${status.includes('Error') ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+            <AlertDescription>{status}</AlertDescription>
+          </Alert>
+        )}
+
+        {exportFile && (
+          <div className="mt-4 p-4 border rounded-lg">
+            <h3 className="font-medium mb-2">Download Export:</h3>
+            <a
+              href={`${API_URL}/download/${exportFile}`}
+              download
+              className="text-blue-600 hover:text-blue-800 underline"
+            >
+              {exportFile}
+            </a>
           </div>
         )}
       </div>
