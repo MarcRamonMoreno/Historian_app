@@ -2,11 +2,13 @@ import os
 import pandas as pd
 from datetime import datetime, timedelta
 import pyodbc
-from typing import List, Dict, Generator, Optional
+from typing import Generator, List, Dict, Optional, Tuple
 import logging
-from logging.handlers import RotatingFileHandler
 import shutil
-
+import concurrent.futures
+from functools import partial
+import threading
+from connection_pool import ConnectionPool
 
 def setup_logging():
     """Set up logging configuration"""
@@ -153,7 +155,7 @@ class ConfigurationManager:
             return False
 
 class OptimizedHistorianProcessor:
-    def __init__(self, config_dir: str, output_dir: str):
+    def __init__(self, config_dir: str, output_dir: str):  
         self.config_dir = config_dir
         self.output_dir = output_dir
         self.logger = setup_logging()
@@ -167,6 +169,7 @@ class OptimizedHistorianProcessor:
             'Encrypt=no;'
             'LoginTimeout=60'  # Increased timeout
         )
+        self.conn_pool = ConnectionPool(self.conn_str, pool_size=5)        
 
     def get_db_connection(self):
         return pyodbc.connect(self.conn_str)
@@ -229,76 +232,80 @@ class OptimizedHistorianProcessor:
         except Exception as e:
             self.logger.error(f"Error validating tags: {str(e)}")
             return []
-
-    def process_data(self, tag: str, start_date: datetime, end_date: datetime, frequency: str) -> Optional[pd.DataFrame]:
+        
+    def process_data(self, tag: str, start_date: datetime, end_date: datetime, frequency_ms: int) -> Optional[pd.DataFrame]:
         try:
-            current_start = start_date
-            chunk_size = timedelta(hours=6)
-            all_chunks = []
-
-            while current_start < end_date:
-                current_end = min(current_start + chunk_size, end_date)
-                query = f"""
-                    SELECT * FROM OPENQUERY(
-                        HISTORIAN_LINK, 
-                        'SELECT tagname, timestamp, value, quality 
-                         FROM ihrawdata 
-                         WHERE tagname = ''{tag}''
-                         AND timestamp >= ''{current_start.strftime("%Y-%m-%d %H:%M:%S")}'' 
-                         AND timestamp <= ''{current_end.strftime("%Y-%m-%d %H:%M:%S")}''
-                         AND samplingmode = ''Interpolated''
-                         AND intervalmilliseconds = 5000'
-                    )"""
-
-                with self.get_db_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(query)
-                    rows = cursor.fetchall()
-
-                    if rows:
-                        # Create a dictionary of lists for each column
-                        data = {
-                            'tagname': [row[0] for row in rows],
-                            'datetime': [row[1] for row in rows],
-                            'value': [row[2] for row in rows],
-                            'quality': [row[3] for row in rows]
-                        }
-                        chunk_df = pd.DataFrame(data)
-                        all_chunks.append(chunk_df)
-
-                current_start = current_end
-
-            if all_chunks:
-                df = pd.concat(all_chunks, ignore_index=True)
-                df.set_index('datetime', inplace=True)
-                df.index = pd.to_datetime(df.index)
-                df = df[['value']]
-                df.columns = [tag.replace('MELSRV01.', '').replace('.F_CV', '')]
-                return df
-
+            query = f"""
+                SELECT * FROM OPENQUERY(
+                    HISTORIAN_LINK, 
+                    'SELECT tagname, timestamp, value, quality 
+                     FROM ihrawdata WITH (NOLOCK)
+                     WHERE tagname = ''{tag}''
+                     AND timestamp >= ''{start_date.strftime("%Y-%m-%d %H:%M:%S")}'' 
+                     AND timestamp < ''{end_date.strftime("%Y-%m-%d %H:%M:%S")}''
+                     AND samplingmode = ''Interpolated''
+                     AND intervalmilliseconds = {frequency_ms}'
+                )"""
+    
+            with self.get_db_connection() as conn:
+                conn.timeout = 300  # 5 minutes timeout
+                cursor = conn.cursor()
+                cursor.execute(query)
+                rows = cursor.fetchall()
+    
+                if rows:
+                    data = {
+                        'tagname': [row[0] for row in rows],
+                        'datetime': [row[1] for row in rows],
+                        'value': [row[2] for row in rows],
+                        'quality': [row[3] for row in rows]
+                    }
+                    df = pd.DataFrame(data)
+                    df.set_index('datetime', inplace=True)
+                    df.index = pd.to_datetime(df.index)
+                    df = df[~df.index.duplicated(keep='first')]
+                    df = df[['value']]
+                    df.columns = [tag.replace('MELSRV01.', '').replace('.F_CV', '')]
+                    return df
+    
             return None
-
+    
         except Exception as e:
-            self.logger.error(f"Error processing data: {str(e)}")
+            self.logger.error(f"Error processing data for tag {tag}: {str(e)}", exc_info=True)
             return None
 
-    def merge_dataframes(self, dfs: Dict[str, pd.DataFrame], frequency: str) -> pd.DataFrame:
+    def merge_dataframes(self, dfs: Dict[str, pd.DataFrame], frequency_ms: int) -> pd.DataFrame:
         if not dfs:
             return pd.DataFrame()
-        
+
         try:
-            merged_df = pd.concat(dfs.values(), axis=1, join='outer')
-            merged_df.sort_index(inplace=True)
-            
-            # Use newer ffill/bfill methods instead of deprecated fillna
-            merged_df = merged_df.ffill().bfill()
-            
-            # Ensure index is datetime and formatted correctly
-            merged_df.index = pd.to_datetime(merged_df.index)
+            # Create fixed time range
+            dates = list(dfs.values())[0].index
+            start_time = dates.min()
+            end_time = dates.max()
+
+            # Create time range using the frequency
+            freq_sec = frequency_ms / 1000
+            time_range = pd.date_range(
+                start=start_time,
+                end=end_time,
+                freq=f'{int(freq_sec)}S',
+                inclusive='both'
+            )
+
+            # Process each dataframe
+            processed_dfs = {}
+            for tag, df in dfs.items():
+                df = df.apply(pd.to_numeric, errors='coerce')
+                df = df.reindex(time_range, method='ffill')
+                processed_dfs[tag] = df
+
+            # Merge dataframes
+            merged_df = pd.concat(processed_dfs.values(), axis=1, join='outer')
             merged_df.index = merged_df.index.strftime('%Y-%m-%d %H:%M:%S')
-            
+
             return merged_df
-            
+
         except Exception as e:
             self.logger.error(f"Error merging dataframes: {str(e)}")
             return pd.DataFrame()

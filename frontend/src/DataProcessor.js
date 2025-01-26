@@ -12,6 +12,7 @@ function DataProcessor() {
   const [startTime, setStartTime] = useState('');
   const [endDate, setEndDate] = useState('');
   const [endTime, setEndTime] = useState('');
+  const [frequency, setFrequency] = useState('00:05:00');
   const [status, setStatus] = useState('');
   const [exportFile, setExportFile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -36,7 +37,6 @@ function DataProcessor() {
     fetchConfigurations();
   }, []);
   
-  // Update the handleSubmit
   const handleSubmit = async (e) => {
     e.preventDefault();
     setStatus('Processing...');
@@ -46,15 +46,16 @@ function DataProcessor() {
       const startDateTime = `${startDate} ${startTime}`;
       const endDateTime = `${endDate} ${endTime}`;
   
-      const response = await fetch(`${API_URL}/process`, {  // Changed from /export to /process
+      const response = await fetch(`${API_URL}/process`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          configuration: `${selectedConfig}.txt`,  // Add .txt extension back
+          configuration: `${selectedConfig}.txt`,
           startDate: startDateTime,
           endDate: endDateTime,
+          frequency: frequency
         }),
       });
   
@@ -70,6 +71,15 @@ function DataProcessor() {
       setStatus(`Error: ${err.message}`);
       setExportFile(null);
     }
+  };
+
+  const validateTimeFormat = (time) => {
+    const regex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/;
+    return regex.test(time);
+  };
+
+  const handleFrequencyChange = (e) => {
+    setFrequency(e.target.value);
   };
 
   return (
@@ -100,7 +110,7 @@ function DataProcessor() {
             >
               <option value="">Select configuration</option>
               {configurations.map((config) => (
-                <option key={config} value={config}>{config.replace('.txt', '')}</option>
+                <option key={config} value={config}>{config}</option>
               ))}
             </select>
           </div>
@@ -145,6 +155,19 @@ function DataProcessor() {
                 className="flex-1"
               />
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-sm font-medium">Sampling Frequency (HH:MM:SS)</label>
+            <Input
+              type="text"
+              value={frequency}
+              onChange={handleFrequencyChange}
+              placeholder="00:05:00"
+              pattern="^([0-1]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"
+              required
+              className="flex-1"
+            />
           </div>
 
           <Button 

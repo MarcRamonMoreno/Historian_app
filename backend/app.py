@@ -218,16 +218,16 @@ def export_data():
         # Create DataFrame with all data
         df = pd.DataFrame(all_data, columns=['tagname', 'timestamp', 'value', 'quality'])
         df['timestamp'] = pd.to_datetime(df['timestamp'])
-        
+
         # Pivot the data to get timestamps as index and tags as columns
         pivoted_df = df.pivot(index='timestamp', columns='tagname', values='value')
-        
+
         # Clean up column names (remove MELSRV01. and .F_CV)
         pivoted_df.columns = pivoted_df.columns.str.replace('MELSRV01.', '').str.replace('.F_CV', '')
-        
+
         # Sort by timestamp
         pivoted_df.sort_index(inplace=True)
-        
+
         # Save to file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"historian_export_{timestamp}.csv"
@@ -356,16 +356,20 @@ def process_data():
         config_name = data.get('configuration')
         start_date = datetime.strptime(data.get('startDate'), "%Y-%m-%d %H:%M:%S")
         end_date = datetime.strptime(data.get('endDate'), "%Y-%m-%d %H:%M:%S")
-        frequency = data.get('frequency')
+        frequency = data.get('frequency', '00:05:00')  # Default 5 minutes if not provided
+        
+        # Convert frequency string to milliseconds
+        h, m, s = map(int, frequency.split(':'))
+        frequency_ms = (h * 3600 + m * 60 + s) * 1000
 
-        logger.info(f"Processing request for config: {config_name}, period: {start_date} to {end_date}")
+        logger.info(f"Processing request for config: {config_name}, period: {start_date} to {end_date}, frequency: {frequency}")
 
         processor = OptimizedHistorianProcessor(CONFIG_DIR, OUTPUT_DIR)
-        if not processor.test_database_functionality():  # Using the correct method
-            logger.warning("Database functionality tests failed - some features may not work correctly")
+        if not processor.test_database_functionality():
+            logger.warning("Database functionality tests failed")
 
         tags = processor.read_configuration(config_name)
-        valid_tags = processor.validate_tags(tags)  # This method uses get_db_connection internally
+        valid_tags = processor.validate_tags(tags)
 
         if not valid_tags:
             return jsonify({"error": "No valid tags found"}), 400
@@ -373,18 +377,16 @@ def process_data():
         dataframes = {}
         for tag in valid_tags:
             logger.info(f"Processing tag: {tag}")
-            df = processor.process_data(tag, start_date, end_date, frequency)
+            df = processor.process_data(tag, start_date, end_date, frequency_ms)
             if df is not None and not df.empty:
                 dataframes[tag] = df
 
         if not dataframes:
             return jsonify({"error": "No data processed"}), 400
 
-        # Merge dataframes
         logger.info("Merging dataframes")
-        merged_df = processor.merge_dataframes(dataframes, frequency)
+        merged_df = processor.merge_dataframes(dataframes, frequency_ms)
 
-        # Save to file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_filename = f"{config_name.replace('.txt', '')}_{timestamp}.csv"
         output_path = os.path.join(OUTPUT_DIR, output_filename)

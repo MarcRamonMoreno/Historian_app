@@ -1,14 +1,14 @@
 import multiprocessing
 
 # Worker configuration - reduce number of workers
-workers = multiprocessing.cpu_count() * 2  # Reduced from +1
-threads = 4  # Increased from 2
+workers = multiprocessing.cpu_count() * 2 + 1 # Reduced from +1
+threads = 8  # Increased from 2
 worker_class = 'gthread'
-worker_connections = 1000
+worker_connections = 2000
 worker_health_check_interval = 30
 
 # Increase timeouts for long-running processes
-timeout = 300
+timeout = 600
 graceful_timeout = 120
 keepalive = 5
 
@@ -16,8 +16,8 @@ keepalive = 5
 bind = "0.0.0.0:5000"
 
 # Performance tuning
-max_requests = 1000
-max_requests_jitter = 50
+max_requests = 2000
+max_requests_jitter = 100
 backlog = 2048
 
 # Logging
